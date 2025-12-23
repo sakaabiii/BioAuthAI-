@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+*.pkl
+*.joblib
+
+# Environments
+venv/
+backend/venv/
+
+# Node
+node_modules/
+frontend/node_modules/
+
+# Secrets
+.env
+*.env
+
+# Databases / runtime
+*.db
+backend/bioauthai.db
+backend/instance/
+
+# Datasets / large files
+*.xls
+*.xlsx
+*.csv
+*.zip
+*.7z
+
+# IDE
+.vscode/
