@@ -283,36 +283,36 @@ def get_anomaly_stats():
     try:
         hours = int(request.args.get("hours", 24))
         since = datetime.utcnow() - timedelta(hours=hours)
-        
+
         # Anomalous keystroke samples
         anomalous_samples = KeystrokeData.query.filter(
             KeystrokeData.timestamp >= since,
             KeystrokeData.anomaly_score > 0.7
         ).count()
-        
+
         total_samples = KeystrokeData.query.filter(
             KeystrokeData.timestamp >= since
         ).count()
-        
+
         # Anomaly rate
         anomaly_rate = (anomalous_samples / total_samples * 100) if total_samples > 0 else 0
-        
+
         # Anomalies by severity
         critical_alerts = SecurityAlert.query.filter(
             SecurityAlert.timestamp >= since,
             SecurityAlert.severity == "critical"
         ).count()
-        
+
         high_alerts = SecurityAlert.query.filter(
             SecurityAlert.timestamp >= since,
             SecurityAlert.severity == "high"
         ).count()
-        
+
         medium_alerts = SecurityAlert.query.filter(
             SecurityAlert.timestamp >= since,
             SecurityAlert.severity == "medium"
         ).count()
-        
+
         # Top anomalous users
         anomalous_users = db.session.query(
             KeystrokeData.user_id,
@@ -325,7 +325,7 @@ def get_anomaly_stats():
         ).order_by(
             db.func.count(KeystrokeData.id).desc()
         ).limit(10).all()
-        
+
         top_users = []
         for user_id, count in anomalous_users:
             user = User.query.get(user_id)
@@ -334,7 +334,7 @@ def get_anomaly_stats():
                 "user_email": user.email if user else "Unknown",
                 "anomaly_count": count
             })
-        
+
         return jsonify({
             "period_hours": hours,
             "anomalous_samples": anomalous_samples,
@@ -347,6 +347,101 @@ def get_anomaly_stats():
             },
             "top_anomalous_users": top_users
         }), 200
-        
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ============================================================
+#  LIVE MONITORING CONTROL (FOR FRONTEND)
+# ============================================================
+
+# Global monitoring state (in production, use Redis or database)
+MONITORING_STATE = {"active": False}
+
+@monitoring_bp.route("/monitoring/status", methods=["GET"])
+def get_monitoring_status():
+    """Get current monitoring status"""
+    try:
+        return jsonify({
+            "active": MONITORING_STATE["active"],
+            "timestamp": datetime.utcnow().isoformat()
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@monitoring_bp.route("/monitoring/start", methods=["POST"])
+def start_monitoring():
+    """Start live monitoring"""
+    try:
+        MONITORING_STATE["active"] = True
+        return jsonify({
+            "message": "Monitoring started",
+            "active": True,
+            "timestamp": datetime.utcnow().isoformat()
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@monitoring_bp.route("/monitoring/stop", methods=["POST"])
+def stop_monitoring():
+    """Stop live monitoring"""
+    try:
+        MONITORING_STATE["active"] = False
+        return jsonify({
+            "message": "Monitoring stopped",
+            "active": False,
+            "timestamp": datetime.utcnow().isoformat()
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@monitoring_bp.route("/monitoring/live-data", methods=["GET"])
+def get_live_data():
+    """Get live monitoring data"""
+    try:
+        # Calculate last 5 minutes of activity
+        five_min_ago = datetime.utcnow() - timedelta(minutes=5)
+
+        # Active sessions (recent auth attempts)
+        active_sessions = AuthenticationLog.query.filter(
+            AuthenticationLog.timestamp >= five_min_ago
+        ).count()
+
+        # Authentication success rate
+        total_auth = AuthenticationLog.query.filter(
+            AuthenticationLog.timestamp >= five_min_ago
+        ).count()
+
+        successful_auth = AuthenticationLog.query.filter(
+            AuthenticationLog.timestamp >= five_min_ago,
+            AuthenticationLog.result == "success"
+        ).count()
+
+        auth_rate = round((successful_auth / total_auth * 100) if total_auth > 0 else 0, 1)
+
+        # Anomaly rate
+        recent_samples = KeystrokeData.query.filter(
+            KeystrokeData.timestamp >= five_min_ago
+        ).count()
+
+        anomalous = KeystrokeData.query.filter(
+            KeystrokeData.timestamp >= five_min_ago,
+            KeystrokeData.anomaly_score > 0.7
+        ).count()
+
+        anomaly_rate = round((anomalous / recent_samples * 100) if recent_samples > 0 else 0, 1)
+
+        return jsonify({
+            "active_sessions_count": active_sessions,
+            "authentication_rate": auth_rate,
+            "anomaly_rate": anomaly_rate,
+            "recent_keystroke_samples": recent_samples,
+            "timestamp": datetime.utcnow().isoformat()
+        }), 200
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500

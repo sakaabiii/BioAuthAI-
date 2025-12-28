@@ -6,10 +6,11 @@ from src.models.user import (
     SecurityAlert,
     KeystrokeData,
     MLModel,
+    SystemSettings,
     db
 )
 from src.utils.feature_extractor import extract_features
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 import pickle
 import numpy as np
@@ -18,13 +19,25 @@ import uuid
 auth_bp = Blueprint("auth", __name__)
 
 
-def _log_auth_attempt(user_id, success, method="keystroke", confidence=None):
-    """Log authentication attempt."""
+def get_threshold(key, default_value):
+    """Get threshold from SystemSettings or use default."""
+    setting = SystemSettings.query.filter_by(key=key).first()
+    if setting:
+        return float(setting.value)
+    return default_value
+
+
+def _log_auth_attempt(user_id, success, method="keystroke", confidence=None, device_info=None, ip_address=None, user_agent=None):
+    """Log authentication attempt with device information."""
     log = AuthenticationLog(
         user_id=user_id,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
         result="success" if success else "failed",
         confidence_score=confidence,
+        ip_address=ip_address or request.remote_addr,
+        user_agent=user_agent or request.headers.get('User-Agent'),
+        device_fingerprint=device_info.get('device_id') if device_info else None,
+        location=None  # Can be populated with geolocation API
     )
     db.session.add(log)
 
@@ -37,7 +50,7 @@ def _create_alert(user_id, title, desc, severity):
         severity=severity,
         title=title,
         description=desc,
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.utc).replace(tzinfo=None)
     )
     db.session.add(alert)
 
@@ -50,7 +63,7 @@ def _failed_login(email):
         user.failed_attempts += 1
         if user.failed_attempts >= 3:
             user.status = "locked"
-            user.locked_until = datetime.utcnow() + timedelta(minutes=30)
+            user.locked_until = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=30)
             _create_alert(
                 user.id,
                 title="Account Locked",
@@ -60,8 +73,8 @@ def _failed_login(email):
         db.session.commit()
     
     if user:
-        _log_auth_attempt(user.id, success=False, method="password")
-    
+        _log_auth_attempt(user.id, success=False, method="password", device_info=None, ip_address=request.remote_addr, user_agent=request.headers.get('User-Agent'))
+
     return jsonify({"error": "Invalid email or password"}), 401
 
 
@@ -110,7 +123,7 @@ def login():
 
         # Check account status
         if user.status == "locked" and user.locked_until:
-            if datetime.utcnow() < user.locked_until:
+            if datetime.now(timezone.utc).replace(tzinfo=None) < user.locked_until:
                 return jsonify({
                     "error": "Account locked",
                     "locked_until": user.locked_until.isoformat()
@@ -142,17 +155,17 @@ def login():
             db.session.add(device)
             is_new_device = True
         else:
-            device.last_seen = datetime.utcnow()
+            device.last_seen = datetime.now(timezone.utc).replace(tzinfo=None)
 
         db.session.commit()
 
         # Handle password-only login (no keystroke data)
         if not keystroke_data:
-            user.last_login = datetime.utcnow()
+            user.last_login = datetime.now(timezone.utc).replace(tzinfo=None)
             user.failed_attempts = 0
             db.session.commit()
-            
-            _log_auth_attempt(user.id, success=True, method="password_only")
+
+            _log_auth_attempt(user.id, success=True, method="password_only", device_info=device_info, ip_address=request.remote_addr, user_agent=request.headers.get('User-Agent'))
             db.session.commit()
             
             return jsonify({
@@ -167,7 +180,7 @@ def login():
         # Collect keystroke data for training
         keystroke_record = KeystrokeData(
             user_id=user.id,
-            session_id=f"login_{datetime.utcnow().timestamp()}",
+            session_id=f"login_{datetime.now(timezone.utc).timestamp()}",
             keystroke_features=json.dumps(keystroke_data),
             device_info=json.dumps(device_info),
             is_training_data=True,
@@ -193,11 +206,11 @@ def login():
         # Load user's ML model
         ml_model = MLModel.query.filter_by(user_id=user.id, is_active=True).first()
         if not ml_model:
-            user.last_login = datetime.utcnow()
+            user.last_login = datetime.now(timezone.utc).replace(tzinfo=None)
             user.failed_attempts = 0
             db.session.commit()
 
-            _log_auth_attempt(user.id, success=True, method="keystroke_no_model")
+            _log_auth_attempt(user.id, success=True, method="keystroke_no_model", device_info=device_info, ip_address=request.remote_addr, user_agent=request.headers.get('User-Agent'))
             db.session.commit()
 
             model_ready = sample_count >= 280
@@ -243,14 +256,22 @@ def login():
             except:
                 confidence = 0.95 if is_genuine else 0.15
 
-            anomaly = not is_genuine or confidence < 0.70
-            access_denied = confidence < 0.60
+            # Get dynamic thresholds from system settings
+            anomaly_threshold = get_threshold('anomaly_threshold', 0.85)  # Default 85%
+            far_threshold = get_threshold('far_threshold', 0.05)  # Default 5%
+
+            # Access denied if confidence is too low (inverse of anomaly threshold)
+            # Higher anomaly threshold = more strict (requires higher confidence)
+            access_denied_threshold = 1.0 - anomaly_threshold
+
+            anomaly = not is_genuine or confidence < (1.0 - far_threshold)
+            access_denied = confidence < access_denied_threshold
 
         except Exception as e:
             return jsonify({"error": f"Model prediction failed: {str(e)}"}), 500
 
         # Log authentication attempt
-        _log_auth_attempt(user.id, success=(not access_denied), confidence=confidence)
+        _log_auth_attempt(user.id, success=(not access_denied), confidence=confidence, device_info=device_info, ip_address=request.remote_addr, user_agent=request.headers.get('User-Agent'))
 
         # Create security alerts if needed
         if access_denied:
@@ -284,7 +305,7 @@ def login():
             user.failed_attempts += 1
             if user.failed_attempts >= 3:
                 user.status = "locked"
-                user.locked_until = datetime.utcnow() + timedelta(minutes=30)
+                user.locked_until = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=30)
                 _create_alert(
                     user.id,
                     title="Account Locked",
@@ -293,15 +314,15 @@ def login():
                 )
         elif is_genuine and not anomaly:
             user.failed_attempts = 0
-            user.last_login = datetime.utcnow()
+            user.last_login = datetime.now(timezone.utc).replace(tzinfo=None)
         elif is_genuine and anomaly:
             user.failed_attempts = 0
-            user.last_login = datetime.utcnow()
+            user.last_login = datetime.now(timezone.utc).replace(tzinfo=None)
         else:
             user.failed_attempts += 1
             if user.failed_attempts >= 3:
                 user.status = "locked"
-                user.locked_until = datetime.utcnow() + timedelta(minutes=30)
+                user.locked_until = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=30)
                 _create_alert(
                     user.id,
                     title="Account Locked",
@@ -360,7 +381,7 @@ def logout():
             if user:
                 log = AuthenticationLog(
                     user_id=user_id,
-                    timestamp=datetime.utcnow(),
+                    timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
                     result="logout"
                 )
                 db.session.add(log)

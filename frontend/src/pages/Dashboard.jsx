@@ -85,11 +85,18 @@ function Dashboard({ currentUser, onLogout }) {
   // ✅ REAL ENDPOINT: Fetch keystrokes
   const fetchKeystrokes = async () => {
     try {
-      const response = await fetch(`${BACKEND_URL}/keystrokes`)
+      // Add cache-busting timestamp to force fresh data
+      const response = await fetch(`${BACKEND_URL}/keystrokes?_t=${Date.now()}`, {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache'
+        }
+      })
       if (response.ok) {
         const data = await response.json()
         setKeystrokeData(data)
-        
+
         if (data && data.length > 0) {
           const trends = generateTrendsFromKeystrokes(data)
           setAuthTrendsData(trends)
@@ -184,23 +191,24 @@ function Dashboard({ currentUser, onLogout }) {
     fetchDashboardData()
   }, [])
 
-  // Auto-refresh
+  // Auto-refresh every 30 seconds for stability
   useEffect(() => {
     const interval = setInterval(() => {
       if (currentView === 'dashboard') {
         fetchDashboardData()
       }
-    }, 30000)
+    }, 30000) // 30 seconds - stable refresh rate
 
     return () => clearInterval(interval)
   }, [currentView])
 
   const formatTime = (date) => {
-    return date.toLocaleTimeString('en-US', { 
-      hour: '2-digit', 
+    return date.toLocaleTimeString('en-US', {
+      hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
-      hour12: false 
+      hour12: false,
+      timeZone: 'Asia/Bahrain' // Arabia Standard Time (UTC+3)
     })
   }
 
@@ -503,7 +511,13 @@ function Dashboard({ currentUser, onLogout }) {
 
                     <div className="text-xs text-gray-500">
                       {item.timestamp
-                        ? new Date(item.timestamp).toLocaleTimeString()
+                        ? new Date(item.timestamp + 'Z').toLocaleTimeString('en-US', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            second: '2-digit',
+                            hour12: false,
+                            timeZone: 'Asia/Bahrain'
+                          })
                         : "Recent"}
                     </div>
                   </div>

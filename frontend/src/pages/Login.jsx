@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import './Login.css'
 
 const BACKEND_URL = 'http://localhost:5001/api'
@@ -10,6 +10,12 @@ function Login({ onLoginSuccess }) {
   const [error, setError] = useState('')
   const [keystrokeStats, setKeystrokeStats] = useState(null)
 
+  // Clear password and reset keystroke data on component mount (page refresh)
+  useEffect(() => {
+    setPassword('')
+    resetKeystrokeData()
+  }, [])
+
   // Keystroke collection refs
   const keystrokeDataRef = useRef({
     dwell_times: [],
@@ -19,12 +25,13 @@ function Login({ onLoginSuccess }) {
   })
   const keyDownTimesRef = useRef({})
   const lastKeyUpTimeRef = useRef(null)
-  const sessionStartRef = useRef(Date.now())
+  const sessionStartRef = useRef(performance.now())
 
-  // Keystroke event handlers
+  // Keystroke event handlers with high-precision timing
   const handleKeyDown = (e) => {
     const key = e.key
-    const timestamp = Date.now()
+    // Use performance.now() for microsecond precision instead of Date.now() (millisecond precision)
+    const timestamp = performance.now()
 
     // Record key down time
     keyDownTimesRef.current[key] = timestamp
@@ -35,7 +42,8 @@ function Login({ onLoginSuccess }) {
 
   const handleKeyUp = (e) => {
     const key = e.key
-    const timestamp = Date.now()
+    // Use performance.now() for microsecond precision instead of Date.now() (millisecond precision)
+    const timestamp = performance.now()
 
     // Calculate dwell time (key hold duration)
     if (keyDownTimesRef.current[key]) {
@@ -62,7 +70,7 @@ function Login({ onLoginSuccess }) {
   }
 
   const updateKeystrokeStats = () => {
-    const totalTime = Date.now() - sessionStartRef.current
+    const totalTime = performance.now() - sessionStartRef.current
     const typingSpeed =
       (keystrokeDataRef.current.key_presses.length / totalTime) * 1000 // keys per second
 
@@ -77,7 +85,7 @@ function Login({ onLoginSuccess }) {
   }
 
   const getKeystrokeData = () => {
-    const totalTime = Date.now() - sessionStartRef.current
+    const totalTime = performance.now() - sessionStartRef.current
     const typingSpeed =
       (keystrokeDataRef.current.key_presses.length / totalTime) * 1000
 
@@ -100,7 +108,7 @@ function Login({ onLoginSuccess }) {
     }
     keyDownTimesRef.current = {}
     lastKeyUpTimeRef.current = null
-    sessionStartRef.current = Date.now()
+    sessionStartRef.current = performance.now()
     setKeystrokeStats(null)
   }
 
@@ -216,6 +224,12 @@ function Login({ onLoginSuccess }) {
         setError(data.error || 'Login failed')
         console.error(' Login error:', data)
 
+        // Reset keystroke data for fresh attempt
+        resetKeystrokeData()
+
+        // Clear password field for new attempt
+        setPassword('')
+
         // If anomaly detected, show warning
         if (data.anomaly) {
           setError(
@@ -226,6 +240,10 @@ function Login({ onLoginSuccess }) {
     } catch (err) {
       setError('Network error: ' + err.message)
       console.error('Login error:', err)
+
+      // Reset keystroke data after network error
+      resetKeystrokeData()
+      setPassword('')
     } finally {
       setLoading(false)
     }
@@ -271,6 +289,7 @@ function Login({ onLoginSuccess }) {
               onKeyUp={handleKeyUp}
               placeholder="Enter your password"
               disabled={loading}
+              autoComplete="off"
               required
             />
           </div>

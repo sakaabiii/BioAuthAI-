@@ -34,7 +34,15 @@ def _safe_max(arr):
     return float(np.max(arr)) if len(arr) else 0.0
 
 def _safe_percentile(arr, p):
-    return float(np.percentile(arr, p)) if len(arr) else 0.0
+    """
+    Calculate percentile using linear interpolation for more accurate timing metrics.
+    Uses 'linear' interpolation method (default in numpy) for smooth percentile estimation.
+    """
+    if len(arr) == 0:
+        return 0.0
+    # Use linear interpolation for more precise percentile calculation
+    # This is especially important for timing data where precision matters
+    return float(np.percentile(arr, p, interpolation='linear'))
 
 
 # ======================================================================
@@ -106,11 +114,16 @@ def extract_features(ks):
     speed = float(typing_speed)
 
     # Global session variability → how chaotic or stable the pattern is
+    # Uses coefficient of variation (CV) for normalized timing stability measurement
     if len(dwell) and len(flight):
-        variability = float(
-            (_safe_std(dwell) + _safe_std(flight)) /
-            max(_safe_mean(dwell) + _safe_mean(flight), 1e-5)
-        )
+        dwell_std = _safe_std(dwell)
+        flight_std = _safe_std(flight)
+        dwell_mean = _safe_mean(dwell)
+        flight_mean = _safe_mean(flight)
+
+        # Prevent division by zero with epsilon value
+        denominator = max(dwell_mean + flight_mean, 1e-9)
+        variability = float((dwell_std + flight_std) / denominator)
     else:
         variability = 0.0
 

@@ -13,6 +13,7 @@ export default function LiveMonitoring() {
   const [liveData, setLiveData] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [lastUpdate, setLastUpdate] = useState(null)
 
   // Get auth token from storage
   const getAuthToken = () => {
@@ -52,6 +53,7 @@ export default function LiveMonitoring() {
         try {
           const data = await fetchWithAuth('/api/monitoring/live-data')
           setLiveData(data)
+          setLastUpdate(new Date())
           setError(null)
         } catch (err) {
           setError("Live data not available.")

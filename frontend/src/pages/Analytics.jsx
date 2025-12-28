@@ -89,13 +89,14 @@ export default function PerUserAnalytics() {
 
   const trainModel = async (userId) => {
     try {
-      const response = await fetch(`${API_BASE.replace('/api', '')}/ml/train/${userId}`, {
+      const response = await fetch(`${API_BASE}/ml/train/${userId}`, {
         method: 'POST'
       })
       const data = await response.json()
 
-      if (response.ok) {
-        alert(`Model trained successfully!\nAccuracy: ${data.model?.accuracy || 'N/A'}`)
+      if (response.ok && data.success) {
+        const result = data.result
+        alert(`Model trained successfully!\nAlgorithm: ${result.best_model}\nAccuracy: ${(result.accuracy * 100).toFixed(2)}%`)
         loadMetrics() // Refresh the data
       } else {
         alert(`Training failed: ${data.error || 'Unknown error'}`)
